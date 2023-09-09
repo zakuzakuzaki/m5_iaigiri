@@ -1,7 +1,3 @@
-/*
- *  Please add lib ESP32-audioI2S to your Arduino IDE:
- * https://github.com/schreibfaul1/ESP32-audioI2S/wiki
- */
 #include "M5StickCPlus.h"
 #include "Arduino.h"
 #include "Audio.h"
@@ -12,8 +8,8 @@ BluetoothSerial SerialBT;
 #define I2S_DOUT 25
 #define I2S_BCLK 26
 #define I2S_LRC  0
-#define FAILED_SCORE 10000
-const String MASTER_MAC = "4c:75:25:9e:9d:32";//マスターとなるM5StickCPlusのMACアドレス
+#define FAILED_SCORE 10000// 合図の前の切ってしまった
+const String MASTER_MAC = "4c:75:25:9e:9d:32";//1PとなるM5StickCPlusのMACアドレス
 
 Audio audio;
 
@@ -33,27 +29,25 @@ float ax, ay, az;
 float accelerationMagnitude;
 unsigned long firedMillis = 0;
 unsigned long iaigiriedMillis = 0;
-long waitingTime = 3000;       // 待機するインターバル（ミリ秒）
+long fireTime = 3000;       // 待機するインターバル（ミリ秒）
 boolean iaigiried = false; //抜刀したかのフラグ
 boolean fired = false; //火蓋が落とされたかのフラグ
+long diffTime = 0;//1Pとの時刻のズレ
 void taskTimer(void *pvParameters)
 {
-    long startTime = millis();
+    M5.Lcd.print("fireTime:");
+    M5.Lcd.println(fireTime);
+    long waitingTime = fireTime - millis() + diffTime;
     M5.Lcd.print("waitingTime:");
     M5.Lcd.println(waitingTime);
-    while (true)
-    {
-        vTaskDelay(1);
-        if (startTime + waitingTime < millis())
-        {
-            Serial.println("FIRED!!");
-            audio.connecttoFS(SPIFFS, "/時代劇演出3.mp3");
-            firedMillis = millis();
-            Serial.println(firedMillis);
-            fired = true;
-            break;
-        }
-    }
+    vTaskDelay(pdMS_TO_TICKS(waitingTime));
+    M5.Lcd.print("millis() :");
+    M5.Lcd.println(millis());
+    M5.Lcd.println("FIRED!!");
+    firedMillis = millis();
+    //vTaskDelay(pdMS_TO_TICKS(400));//FIXME:2つのM5で、音のタイミングが異なっていたら、ここでdelayを入れて調整する。
+    audio.connecttoFS(SPIFFS, "/時代劇演出3.mp3");
+    fired = true;
     vTaskDelete(NULL);
 }
 
@@ -66,10 +60,10 @@ void taskIaigiri(void *pvParameters)
         //IMUによる抜刀の検知
         M5.IMU.getAccelData(&ax, &ay, &az);
         accelerationMagnitude = sqrt(ax * ax + ay * ay + az * az);
-        if (accelerationMagnitude > accelerationThreshold | M5.BtnB.wasPressed()) {
+        if (accelerationMagnitude > accelerationThreshold) {
           audio.connecttoFS(SPIFFS, "/剣で斬る3.mp3");
           iaigiriedMillis = millis();
-          vTaskDelay(1000);
+          vTaskDelay(pdMS_TO_TICKS(1000));// 音が鳴り切るまで待つ。
           iaigiried = true;
           break;
         }
@@ -89,7 +83,7 @@ void setup() {
     audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
     audio.setVolume(21);
     if (!SPIFFS.begin()) {
-      Serial.println("SPIFFS Mount Failed");
+      M5.Lcd.println("SPIFFS Mount Failed");
       return;
     }
 
@@ -108,8 +102,16 @@ void setup() {
       SerialBT.begin("Iaigiri_1P", true);
       boolean connected = SerialBT.connect("Iaigiri_2P");
       if(connected){
-        M5.Lcd.println("PRESS A TO START");
+        M5.Lcd.println("CONNECTED!!");
         isNpc =false;
+        //時刻同期用
+        SerialBT.print(String(millis()) + "\r");
+        while(true){
+          if (SerialBT.available()){
+            M5.Lcd.println("PRESS A TO START");
+            break;
+          }
+        }
       }else{
         M5.Lcd.println("Cannot connected to 2P");
         isNpc =true;
@@ -118,6 +120,20 @@ void setup() {
       is1P = false;
       M5.Lcd.println("You are 2P");
       SerialBT.begin("Iaigiri_2P", false);
+      //時刻同期
+      while(true){
+        if (SerialBT.available()){
+          receivedData = SerialBT.readStringUntil('\r');
+          M5.Lcd.print("1P millis():");
+          M5.Lcd.println(receivedData);
+          M5.Lcd.print("2P millis():");
+          M5.Lcd.println(millis());
+          diffTime = millis() - receivedData.toInt();
+          SerialBT.print("OK\r");
+          M5.Lcd.println("READY TO START");
+          break;
+        }
+      }
     }
     
     //変数の初期化
@@ -128,6 +144,10 @@ void setup() {
 void loop() {
     audio.loop();
     M5.update();
+
+    if(M5.BtnB.wasPressed()){
+      ESP.restart();
+    }
 
     //Bluetooth serial
     if (SerialBT.available()){
@@ -142,11 +162,13 @@ void loop() {
         bluetoothSerialData = LOSE;
         Serial.print("You Lose !!");
         audio.connecttoFS(SPIFFS, "間抜け1.mp3");
-      }else{
+      }else{// 数字データの場合
+        M5.Lcd.print("GAME MODE: ");
+        M5.Lcd.println(gameMode);
         if(gameMode == IDLING && !is1P){
-          waitingTime = receivedData.toInt();
+          fireTime = receivedData.toInt();
           bluetoothSerialData = START;
-        }else if(gameMode == JUDGEMENT && is1P){
+        }else{
           bluetoothSerialData = SCORE;
           enemyScore = receivedData.toInt();
         }
@@ -154,22 +176,25 @@ void loop() {
     }
     switch (gameMode){
       case IDLING:
-        if (M5.BtnA.wasPressed() && is1P || bluetoothSerialData == START){//1Pのみが開始できる。
+        if (M5.BtnA.wasPressed() || bluetoothSerialData == START){
             M5.Lcd.fillScreen(BLACK);
             M5.Lcd.setCursor(0, 0);
             M5.Lcd.println("GAME START");
             audio.connecttoFS(SPIFFS, "/尺八.mp3");
+
             //2Pに待機時間を通知
             if(is1P){
-              waitingTime = random(2000, 8000);//乱数で待ち時間作成
-              SerialBT.print(String(waitingTime) + "\r");
+              fireTime = millis() + random(4000, 8000);//乱数で待ち時間作成
+              SerialBT.print(String(fireTime) + "\r");
             }
             myScore = 0;
             enemyScore = 0;
             fired = false;
-            xTaskCreatePinnedToCore(taskTimer, "TaskTimer", 4096, NULL, 0, NULL, 0);
+            M5.Lcd.print("now: ");
+            M5.Lcd.println(millis() - diffTime);
+            xTaskCreatePinnedToCore(taskTimer, "TaskTimer", 4096, NULL, 1, NULL, 1);
             iaigiried = false;
-            xTaskCreatePinnedToCore(taskIaigiri, "TaskIaigiri", 4096, NULL, 1, NULL, 1);
+            xTaskCreatePinnedToCore(taskIaigiri, "TaskIaigiri", 4096, NULL, 0, NULL, 0);
             bluetoothSerialData = NONE;
             gameMode = WAITING;
         }
@@ -180,7 +205,7 @@ void loop() {
           if (myScore < 0){// 失敗時
             myScore = FAILED_SCORE;
           }
-          // お互いのscoreを比較し、勝利判定する。
+          // 1Pは判定モード、２Pは待機モードへ移行
           if(is1P){
             gameMode = JUDGEMENT;
           }else{
