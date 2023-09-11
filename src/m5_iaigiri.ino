@@ -31,7 +31,9 @@ unsigned long firedMillis = 0;
 unsigned long iaigiriedMillis = 0;
 long fireTime = 3000;       // 待機するインターバル（ミリ秒）
 boolean iaigiried = false; //抜刀したかのフラグ
+boolean iaigiriPlay = false; //抜刀音声を再生するフラグ
 boolean fired = false; //火蓋が落とされたかのフラグ
+boolean firePlay = false; //火蓋が落とされた音声を再生するフラグ
 long diffTime = 0;//1Pとの時刻のズレ
 void taskTimer(void *pvParameters)
 {
@@ -46,8 +48,8 @@ void taskTimer(void *pvParameters)
     M5.Lcd.println("FIRED!!");
     firedMillis = millis();
     //vTaskDelay(pdMS_TO_TICKS(400));//FIXME:2つのM5で、音のタイミングが異なっていたら、ここでdelayを入れて調整する。
-    audio.connecttoFS(SPIFFS, "/時代劇演出3.mp3");
     fired = true;
+    firePlay = true;
     vTaskDelete(NULL);
 }
 
@@ -61,10 +63,9 @@ void taskIaigiri(void *pvParameters)
         M5.IMU.getAccelData(&ax, &ay, &az);
         accelerationMagnitude = sqrt(ax * ax + ay * ay + az * az);
         if (accelerationMagnitude > accelerationThreshold) {
-          audio.connecttoFS(SPIFFS, "/剣で斬る3.mp3");
           iaigiriedMillis = millis();
-          vTaskDelay(pdMS_TO_TICKS(1000));// 音が鳴り切るまで待つ。
           iaigiried = true;
+          iaigiriPlay = true;
           break;
         }
     }
@@ -176,7 +177,7 @@ void loop() {
     }
     switch (gameMode){
       case IDLING:
-        if (M5.BtnA.wasPressed() || bluetoothSerialData == START){
+        if ((M5.BtnA.wasPressed() && is1P) || bluetoothSerialData == START){// 1Pのみが開始することができる
             M5.Lcd.fillScreen(BLACK);
             M5.Lcd.setCursor(0, 0);
             M5.Lcd.println("GAME START");
@@ -200,6 +201,25 @@ void loop() {
         }
         break;
       case WAITING:
+        if(iaigiriPlay){
+          audio.stopSong();
+          audio.connecttoFS(SPIFFS, "/剣で斬る3.mp3");
+          long playedTime = millis();
+          if(fired){// 既に合図が鳴っている場合は、音がなり終わるまで待つ（待たないと、音が成り切るまでに次の音が再生されてしまう。）
+            while(true){
+              audio.loop();
+              if(playedTime + 1000 < millis()){
+                break;
+              }
+            }
+          }
+          iaigiriPlay = false;
+        }
+        if(firePlay){
+          audio.stopSong();
+          audio.connecttoFS(SPIFFS, "/時代劇演出3.mp3");
+          firePlay = false;
+        }
         if(iaigiried && fired){
           myScore = iaigiriedMillis - firedMillis;
           if (myScore < 0){// 失敗時
@@ -258,7 +278,6 @@ void loop() {
             delay(500);
             audio.connecttoFS(SPIFFS, "間抜け1.mp3");
         }
-
         gameMode = IDLING;
         break;
     }
