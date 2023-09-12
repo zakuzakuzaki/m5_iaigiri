@@ -37,15 +37,15 @@ boolean firePlay = false; //火蓋が落とされた音声を再生するフラ�
 long diffTime = 0;//1Pとの時刻のズレ
 void taskTimer(void *pvParameters)
 {
-    M5.Lcd.print("fireTime:");
-    M5.Lcd.println(fireTime);
+    Serial.print("fireTime:");
+    Serial.println(fireTime);
     long waitingTime = fireTime - millis() + diffTime;
-    M5.Lcd.print("waitingTime:");
-    M5.Lcd.println(waitingTime);
+    Serial.print("waitingTime:");
+    Serial.println(waitingTime);
     vTaskDelay(pdMS_TO_TICKS(waitingTime));
-    M5.Lcd.print("millis() :");
-    M5.Lcd.println(millis());
-    M5.Lcd.println("FIRED!!");
+    Serial.print("millis() :");
+    Serial.println(millis());
+    Serial.println("FIRED!!");
     firedMillis = millis();
     fired = true;
     firePlay = true;
@@ -139,6 +139,16 @@ void setup() {
     //変数の初期化
     gameMode = IDLING;
     bluetoothSerialData = NONE;
+    M5.Lcd.setRotation(0);
+    M5.Lcd.setTextSize(3);
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(0, 0);
+    if(is1P){
+      M5.Lcd.println("PRESS A");
+    }else{
+      M5.Lcd.println("WAITING");
+    }
+
 }
 
 void loop() {
@@ -152,19 +162,27 @@ void loop() {
     //Bluetooth serial
     if (SerialBT.available()){
       receivedData = SerialBT.readStringUntil('\r');
-      M5.Lcd.print("received:");
-      M5.Lcd.println(receivedData);
+      Serial.print("received:");
+      Serial.println(receivedData);
       if(receivedData == "win"){
         bluetoothSerialData = WIN;
         Serial.print("You Win !!");
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.println("WIN !!");
+        M5.Lcd.print(myScore);
+        M5.Lcd.println("ms");
         audio.connecttoFS(SPIFFS, "「やった！」.mp3");
       }else if(receivedData == "lose"){
         bluetoothSerialData = LOSE;
         Serial.print("You Lose !!");
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.println("LOSE..");
+        M5.Lcd.print(myScore);
+        M5.Lcd.println("ms");
         audio.connecttoFS(SPIFFS, "間抜け1.mp3");
       }else{// 数字データの場合
-        M5.Lcd.print("GAME MODE: ");
-        M5.Lcd.println(gameMode);
+        Serial.print("GAME MODE: ");
+        Serial.println(gameMode);
         if(gameMode == IDLING && !is1P){
           fireTime = receivedData.toInt();
           bluetoothSerialData = START;
@@ -179,7 +197,7 @@ void loop() {
         if ((M5.BtnA.wasPressed() && is1P) || bluetoothSerialData == START){// 1Pのみが開始することができる
             M5.Lcd.fillScreen(BLACK);
             M5.Lcd.setCursor(0, 0);
-            M5.Lcd.println("GAME START");
+            Serial.println("GAME START");
             audio.connecttoFS(SPIFFS, "/尺八.mp3");
 
             //2Pに待機時間を通知
@@ -190,8 +208,8 @@ void loop() {
             myScore = 0;
             enemyScore = 0;
             fired = false;
-            M5.Lcd.print("now: ");
-            M5.Lcd.println(millis() - diffTime);
+            Serial.print("now: ");
+            Serial.println(millis() - diffTime);
             long playedTime = millis();
             while(true){
               audio.loop();
@@ -211,6 +229,7 @@ void loop() {
           audio.stopSong();
           audio.connecttoFS(SPIFFS, "/剣で斬る3.mp3");
           long playedTime = millis();
+          M5.Lcd.fillScreen(WHITE);
           if(fired){// 既に合図が鳴っている場合は、音がなり終わるまで待つ（待たないと、音が成り切るまでに次の音が再生されてしまう。）
             while(true){
               audio.loop();
@@ -246,6 +265,7 @@ void loop() {
           delay(100);
           return;//両者が居合斬りしていない場合は待機する。
         }
+        M5.Lcd.fillScreen(BLACK);
         bool isWin = false;
         bool myFailed = false;
         bool enemyFailed = false;
@@ -259,14 +279,18 @@ void loop() {
           if(!is1P){//2Pの場合は判定せず、1Pの判定結果を待つ
             gameMode = IDLING;
             break;
-            }
-          M5.Lcd.print("myScore:");
-          M5.Lcd.println(myScore);
+          }
+          Serial.print("myScore:");
+          Serial.println(myScore);
           if(myScore < enemyScore){
             isWin = true;
+            M5.Lcd.println("WIN!!");
           }else{
             isWin = false;
+            M5.Lcd.println("LOSE..");
           }
+          M5.Lcd.print(myScore);
+          M5.Lcd.println("ms");
         }
         if(myScore == FAILED_SCORE)myFailed = true;
         if(enemyScore == FAILED_SCORE)enemyFailed = true;
