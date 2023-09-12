@@ -47,7 +47,6 @@ void taskTimer(void *pvParameters)
     M5.Lcd.println(millis());
     M5.Lcd.println("FIRED!!");
     firedMillis = millis();
-    //vTaskDelay(pdMS_TO_TICKS(400));//FIXME:2つのM5で、音のタイミングが異なっていたら、ここでdelayを入れて調整する。
     fired = true;
     firePlay = true;
     vTaskDelete(NULL);
@@ -193,6 +192,13 @@ void loop() {
             fired = false;
             M5.Lcd.print("now: ");
             M5.Lcd.println(millis() - diffTime);
+            long playedTime = millis();
+            while(true){
+              audio.loop();
+              if(playedTime + 4000 < millis()){//尺八音が鳴り終わるまで待機
+                break;
+              }
+            }
             xTaskCreatePinnedToCore(taskTimer, "TaskTimer", 4096, NULL, 1, NULL, 1);
             iaigiried = false;
             xTaskCreatePinnedToCore(taskIaigiri, "TaskIaigiri", 4096, NULL, 0, NULL, 0);
